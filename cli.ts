@@ -1,4 +1,4 @@
-#!/usr/bin/env -S bun
+#!/usr/bin/env -S node
 /**
  * Command-line interface for extracting comments from YAML files.
  *
@@ -54,6 +54,6 @@ const output = comments
         h.path
       }): ${JSON.stringify(h.text)}`,
   )
-  .join("\n\n");
+  .join("\n");
 
 console.log(output);

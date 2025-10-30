@@ -36,7 +36,7 @@ npx @jlarky/extract-yaml-comments config.yml
 **Deno:**
 
 ```bash
-deno run --allow-read jsr:@jlarky/extract-yaml-comments/cli config.yml
+deno run --allow-read=. --allow-env jsr:@jlarky/extract-yaml-comments/cli config.yml
 ```
 
 Output:
@@ -100,7 +100,7 @@ npx jsr add @jlarky/extract-yaml-comments
 ### If using Deno:
 
 ```bash
-deno run --allow-read jsr:@jlarky/extract-yaml-comments/cli config.yml
+deno run --allow-read=. --allow-env jsr:@jlarky/extract-yaml-comments/cli config.yml
 ```
 
 Or add to your project:
