@@ -1,0 +1,12 @@
+{
+  "name": "@jlarky/extract-yaml-comments",
+  "version": "0.0.1",
+  "license": "MIT",
+  "exports": {
+    ".": "./index.ts",
+    "./cli": "./cli.ts"
+  },
+  "publish": {
+    "include": ["index.ts", "cli.ts", "README.md"]
+  }
+}

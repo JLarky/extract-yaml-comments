@@ -1,0 +1,19 @@
+{
+  "name": "@jlarky/extract-yaml-comments",
+  "repository": "https://github.com/JLarky/extract-yaml-comments",
+  "module": "index.ts",
+  "type": "module",
+  "bin": {
+    "extract-yaml-comments": "./cli.ts"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "dedent": "^1.7.0"
+  },
+  "peerDependencies": {
+    "typescript": "^5"
+  },
+  "dependencies": {
+    "yaml": "^2.4.0"
+  }
+}
