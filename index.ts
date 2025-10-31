@@ -45,6 +45,7 @@ export interface ExtractYamlCommentsResult {
  *
  * This function parses a YAML string and extracts all comments, mapping each comment
  * to the nearest following YAML node. Comments inside block scalars are excluded.
+ * Supports both full-line comments and inline trailing comments.
  *
  * @param src - The YAML document source code as a string
  * @returns An object containing an array of extracted comments
@@ -67,91 +68,213 @@ export interface ExtractYamlCommentsResult {
 export function extractYamlComments(src: string): ExtractYamlCommentsResult {
   const doc = YAML.parseDocument(src);
 
-  // Build AST node starts and collect block scalar ranges to exclude inline '#'
-  interface AstNode {
-    start?: number;
+  // Build map of node positions and paths
+  interface NodeInfo {
+    start: number;
+    end: number;
     path: string;
   }
 
-  const ast: AstNode[] = [];
+  const nodes: NodeInfo[] = [];
   const blockRanges: Array<[number, number]> = [];
+  const valueNodes: NodeInfo[] = []; // Track only scalar value nodes separately
 
   const keyStr = (k: unknown): string =>
     isScalar(k) ? String((k as any).value) : "<non-scalar-key>";
 
+  // Walk AST to collect all nodes and their positions
   const walkAst = (node: any, path: (string | number)[]): void => {
     if (!node) return;
 
-    ast.push({
-      start: node.range?.[0],
-      path: path.join("."),
-    });
+    const range = node.range;
+    if (!range || range.length < 2) return;
 
-    if (node.type === "BLOCK_LITERAL" && node.range) {
-      blockRanges.push([node.range[0], node.range[1]]);
+    const start = range[0];
+    const end = range[1];
+
+    // Track block scalars to exclude their content
+    if (node.type === "BLOCK_LITERAL" || node.type === "BLOCK_FOLDED") {
+      blockRanges.push([start, end]);
     }
 
+    // Track the node itself first (for comments before maps/sequences)
+    if (path.length > 0 || isMap(node) || isSeq(node)) {
+      nodes.push({
+        start,
+        end,
+        path: path.join("."),
+      });
+    }
+
+    // For key-value pairs, we need to track both key and value
     if (isMap(node)) {
       for (const pair of node.items || []) {
         const key = keyStr(pair.key);
-        walkAst(pair.value, [...path, key]);
+        const keyRange = (pair.key as any).range;
+        const valueRange = (pair.value as any).range;
+
+        // Track the value node (which is what inline comments attach to)
+        if (valueRange && valueRange.length >= 2) {
+          const valueNode: NodeInfo = {
+            start: valueRange[0],
+            end: valueRange[1],
+            path: [...path, key].join("."),
+          };
+          nodes.push(valueNode);
+
+          // Only track scalar values, not map/seq values
+          if (!isMap(pair.value) && !isSeq(pair.value)) {
+            valueNodes.push(valueNode);
+          }
+
+          walkAst(pair.value, [...path, key]);
+        }
       }
     } else if (isSeq(node)) {
-      (node.items || []).forEach((child: any, i: number) =>
-        walkAst(child, [...path, i]),
-      );
+      (node.items || []).forEach((child: any, i: number) => {
+        walkAst(child, [...path, i]);
+      });
+    } else {
+      // Scalar node - track as value node
+      const scalarNode: NodeInfo = {
+        start,
+        end,
+        path: path.join("."),
+      };
+      nodes.push(scalarNode);
+      valueNodes.push(scalarNode);
     }
   };
 
   walkAst(doc.contents, []);
 
-  const firstAstStart = ast.reduce(
-    (m: number | undefined, n: AstNode) =>
-      n.start != null && (m == null || n.start < m) ? n.start : m,
-    undefined,
-  );
+  // Sort nodes by start position
+  nodes.sort((a, b) => a.start - b.start);
 
+  // Find the first node start position
+  const firstNodeStart = nodes.length > 0 ? nodes[0].start : Infinity;
+
+  // Helper to check if offset is inside a block scalar
   const inBlock = (offset: number): boolean =>
     blockRanges.some(
       ([s, e]) => s != null && e != null && offset >= s && offset < e,
     );
 
-  const nearestFollowingPath = (offset: number): string => {
-    let best: AstNode | undefined;
-    for (const n of ast) {
-      if (n.start == null) continue;
-      if (n.start >= offset && (!best || n.start < best.start!)) best = n;
+  // Helper to check if offset is inside a scalar value node's actual content
+  const inValueNode = (offset: number): boolean => {
+    // Check if offset is strictly inside any VALUE node's range (not map/seq nodes)
+    for (const node of valueNodes) {
+      // Check if offset is within the node's range (strictly inside, not at boundaries)
+      if (node.start < offset && offset < node.end) {
+        return true;
+      }
     }
-    return best ? best.path : "document";
+    return false;
   };
 
-  // Precompute start offsets of each line
-  const lineStarts = [0];
+  // Helper to find the node that starts at or after an offset
+  const findNextNode = (offset: number): NodeInfo | null => {
+    for (const node of nodes) {
+      if (node.start >= offset) {
+        return node;
+      }
+    }
+    return null;
+  };
+
+  // Helper to find the node that contains an offset (for inline comments)
+  const findNodeAtOffset = (offset: number): NodeInfo | null => {
+    // Find the node on the same line that ends before or at this offset
+    for (const node of nodes) {
+      if (node.end <= offset && node.start <= offset) {
+        // Check if on same line
+        const nodeLineStart = src.substring(0, node.start).split("\n").length;
+        const offsetLineStart = src.substring(0, offset).split("\n").length;
+        if (nodeLineStart === offsetLineStart) {
+          return node;
+        }
+      }
+    }
+    return null;
+  };
+
+  // Precompute line starts
+  const lineStarts: number[] = [0];
   for (let i = 0; i < src.length; i++) {
     if (src[i] === "\n") lineStarts.push(i + 1);
   }
-  const lines = src.split("\n");
 
+  const lines = src.split(/\r?\n/);
   const comments: YamlComment[] = [];
+
+  // Process each line
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i]!;
-    const hashIdx = line.indexOf("#");
-    if (hashIdx === -1) continue;
+    const lineStart = lineStarts[i]!;
 
-    // treat only YAML comment lines (first non-space is '#')
-    const trimmed = line.trimStart();
-    if (!trimmed.startsWith("#")) continue;
+    // Find all '#' characters in the line
+    let hashIndex = 0;
+    while ((hashIndex = line.indexOf("#", hashIndex)) !== -1) {
+      const hashOffset = lineStart + hashIndex;
 
-    const offset = lineStarts[i]! + line.indexOf("#");
-    if (inBlock(offset)) continue; // skip comments inside block scalars
+      // Skip if inside a block scalar
+      if (inBlock(hashOffset)) {
+        hashIndex++;
+        continue;
+      }
 
-    const text = trimmed.replace(/^#\s?/, "");
-    const path =
-      offset < (firstAstStart ?? Infinity)
-        ? "document"
-        : nearestFollowingPath(offset);
+      // Check if this is a full-line comment (first non-whitespace is '#')
+      const beforeHash = line.substring(0, hashIndex).trim();
+      const isFullLineComment = beforeHash === "";
 
-    comments.push({ line: i + 1, path, text });
+      // Skip if this # is inside a value node (like URLs with #)
+      // But allow it if it's a full-line comment or trailing comment
+      if (!isFullLineComment && inValueNode(hashOffset)) {
+        // This # is part of a value, not a comment
+        hashIndex++;
+        continue;
+      }
+
+      // Extract comment text
+      let commentText = line.substring(hashIndex + 1).trimStart();
+
+      // Determine which node this comment belongs to
+      let path = "document";
+
+      if (isFullLineComment) {
+        // Full-line comment: find the next node after this line
+        const nextLineStart =
+          i < lines.length - 1 ? lineStarts[i + 1]! : src.length;
+        const node = findNextNode(nextLineStart);
+        if (hashOffset < firstNodeStart) {
+          // Comment is before first node
+          path = "document";
+        } else if (node) {
+          path = node.path;
+        }
+      } else {
+        // Inline comment: find the node on this line that ends before the hash
+        const node = findNodeAtOffset(hashOffset);
+        if (node) {
+          path = node.path;
+        } else {
+          // Fallback: find next node
+          const node = findNextNode(hashOffset);
+          if (node) {
+            path = node.path;
+          }
+        }
+      }
+
+      comments.push({
+        line: i + 1,
+        path,
+        text: commentText,
+      });
+
+      // Only process the first '#' on a line (to avoid false positives from strings)
+      break;
+    }
   }
 
   return { comments };

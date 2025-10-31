@@ -132,4 +132,45 @@ active: true`;
     const { comments } = extractYamlComments(yaml);
     expect(comments).toEqual([]);
   });
+
+  it("should extract inline trailing comments", () => {
+    const yaml = `app:
+  name: my-app
+  version: 1.0.0
+  database:
+    host: localhost # Host address comment
+    port: 5432 # Port number comment
+    name: mydb # Database name comment
+config:
+  debug: true # Debug mode toggle
+  timeout: 30 # Timeout in seconds`;
+    const { comments } = extractYamlComments(yaml);
+    // Inline trailing comments should now be extracted!
+    expect(comments).toHaveLength(5);
+    expect(comments[0]).toEqual({
+      line: 5,
+      path: "app.database.host",
+      text: "Host address comment",
+    });
+    expect(comments[1]).toEqual({
+      line: 6,
+      path: "app.database.port",
+      text: "Port number comment",
+    });
+    expect(comments[2]).toEqual({
+      line: 7,
+      path: "app.database.name",
+      text: "Database name comment",
+    });
+    expect(comments[3]).toEqual({
+      line: 9,
+      path: "config.debug",
+      text: "Debug mode toggle",
+    });
+    expect(comments[4]).toEqual({
+      line: 10,
+      path: "config.timeout",
+      text: "Timeout in seconds",
+    });
+  });
 });
