@@ -1,5 +1,5 @@
 import { describe, it, expect } from "bun:test";
-import { extractYamlComments, type YamlComment } from "./index";
+import { extractYamlComments } from "./index";
 
 describe("extractYamlComments", () => {
   it("should extract simple comments", () => {
@@ -101,8 +101,8 @@ a: 1
 b: 2`;
     const { comments } = extractYamlComments(yaml);
     expect(comments).toHaveLength(2);
-    expect(comments[0].text).toBe("comment with space");
-    expect(comments[1].text).toBe("comment without space");
+    expect(comments[0]!.text).toBe("comment with space");
+    expect(comments[1]!.text).toBe("comment without space");
   });
 
   it("should handle arrays with comments", () => {
@@ -131,6 +131,47 @@ age: 30
 active: true`;
     const { comments } = extractYamlComments(yaml);
     expect(comments).toEqual([]);
+  });
+
+  it("should preserve whitespace in comments", () => {
+    const yaml = `# Rule: REMOTE_COMMIT === ORIGINAL_COMMIT_SHA
+a: 1
+#  Rule: HEAD~1 === ORIGINAL_COMMIT_SHA
+b: 2
+#   Multiple spaces should be preserved
+c: 3
+#Rule without space
+d: 4`;
+    const { comments } = extractYamlComments(yaml);
+    expect(comments).toHaveLength(4);
+    expect(comments[0]!.text).toBe(
+      "Rule: REMOTE_COMMIT === ORIGINAL_COMMIT_SHA",
+    );
+    expect(comments[1]!.text).toBe(" Rule: HEAD~1 === ORIGINAL_COMMIT_SHA");
+    expect(comments[2]!.text).toBe("  Multiple spaces should be preserved");
+    expect(comments[3]!.text).toBe("Rule without space");
+  });
+
+  it("should preserve leading whitespace in multi-line comment scenarios", () => {
+    const yaml = `# Rule: REMOTE_COMMIT === ORIGINAL_COMMIT_SHA
+# That will help us in case of race conditions
+format:
+  steps:
+    #  Rule: HEAD~1 === ORIGINAL_COMMIT_SHA
+    #  That will prevent us from pushing random changes
+    name: test`;
+    const { comments } = extractYamlComments(yaml);
+    expect(comments).toHaveLength(4);
+    expect(comments[0]!.text).toBe(
+      "Rule: REMOTE_COMMIT === ORIGINAL_COMMIT_SHA",
+    );
+    expect(comments[1]!.text).toBe(
+      "That will help us in case of race conditions",
+    );
+    expect(comments[2]!.text).toBe(" Rule: HEAD~1 === ORIGINAL_COMMIT_SHA");
+    expect(comments[3]!.text).toBe(
+      " That will prevent us from pushing random changes",
+    );
   });
 
   it("should extract inline trailing comments", () => {

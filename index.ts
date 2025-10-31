@@ -110,7 +110,6 @@ export function extractYamlComments(src: string): ExtractYamlCommentsResult {
     if (isMap(node)) {
       for (const pair of node.items || []) {
         const key = keyStr(pair.key);
-        const keyRange = (pair.key as any).range;
         const valueRange = (pair.value as any).range;
 
         // Track the value node (which is what inline comments attach to)
@@ -152,7 +151,7 @@ export function extractYamlComments(src: string): ExtractYamlCommentsResult {
   nodes.sort((a, b) => a.start - b.start);
 
   // Find the first node start position
-  const firstNodeStart = nodes.length > 0 ? nodes[0].start : Infinity;
+  const firstNodeStart = nodes.length > 0 ? nodes[0]!.start : Infinity;
 
   // Helper to check if offset is inside a block scalar
   const inBlock = (offset: number): boolean =>
@@ -235,8 +234,12 @@ export function extractYamlComments(src: string): ExtractYamlCommentsResult {
         continue;
       }
 
-      // Extract comment text
-      let commentText = line.substring(hashIndex + 1).trimStart();
+      // Extract comment text: remove '#' and optionally one space after it
+      // This preserves any additional whitespace (e.g., "#  text" -> " text")
+      const afterHash = line.substring(hashIndex + 1);
+      const commentText = afterHash.startsWith(" ")
+        ? afterHash.slice(1) // Remove one space after "#"
+        : afterHash; // No space after "#", keep as is
 
       // Determine which node this comment belongs to
       let path = "document";
